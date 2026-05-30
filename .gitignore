@@ -3,6 +3,9 @@
 __pycache__/
 *.pyc
 
+# Secrets / local config — never commit
+.env
+
 # Experiment artifacts (regenerated at runtime)
 data/*
 !data/.gitkeep

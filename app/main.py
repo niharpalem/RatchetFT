@@ -14,6 +14,13 @@ import queue
 import threading
 from pathlib import Path
 
+# Load configuration/secrets (e.g. HF_TOKEN) from a local .env if present.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles

@@ -1,27 +1,24 @@
 # RatchetFT — runtime dependencies
-# Install into the uv venv with:  uv pip install -r requirements.txt
-# (this .venv has no pip; use `uv pip`, not plain pip)
+# Install:  uv pip install -r requirements.txt
 
 # Web server (FastAPI + HTMX + Jinja2)
 fastapi>=0.136
 uvicorn[standard]>=0.27
 jinja2>=3.1
-python-multipart>=0.0.20      # form posts (task input, predict)
+python-multipart>=0.0.20
+python-dotenv>=1.0            # loads configuration/secrets from .env
 
-# Agent brain = the local `claude` CLI (subprocess) — no SDK / API key.
-# It must be on PATH:  which claude
+# Agent brain: the local `claude` CLI (invoked as a subprocess). Must be on PATH.
 
-# Real local training + inference (LocalTrainer, on Apple Silicon MPS / CUDA)
+# Training + inference (LoRA fine-tuning on Apple Silicon MPS / CUDA)
 torch>=2.4
-transformers>=4.55            # LFM2 + modern model support
-peft>=0.11                    # LoRA adapters
-datasets>=2.20                # HuggingFace dataset loading (+ huggingface_hub)
+transformers>=4.55
+peft>=0.11
+datasets>=2.20
 accelerate>=0.30
-huggingface_hub>=0.24         # grounded dataset/model search
+huggingface_hub>=0.24
 
-# Optional — cloud GPU backend (only for RATCHETFT_BACKEND=modal)
-# uv pip install modal ; .venv/bin/modal setup ; modal secret create huggingface HF_TOKEN=...
+# Optional — cloud GPU backend (enable with RATCHETFT_BACKEND=modal)
 modal>=1.4
 
-# NOTE on the corp proxy: dataset/model downloads work from YOUR terminal but are
-# blocked inside the Claude Code sandbox. Once cached, load offline with HF_HUB_OFFLINE=1.
+# Configuration: copy .env.example to .env and set your tokens. .env is never committed.
