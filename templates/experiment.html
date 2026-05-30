@@ -1,0 +1,446 @@
+{% extends "base.html" %}
+{% block title %}{{ exp.task }} · RatchetFT{% endblock %}
+{% block main %}
+<div class="flex-1 flex flex-col min-w-0">
+  <!-- header -->
+  <header class="border-b border-zinc-200 bg-white px-6 py-4">
+    <div class="flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <div class="text-[11px] uppercase tracking-wide text-zinc-400">Task</div>
+        <h1 class="text-lg font-semibold tracking-tight truncate">{{ exp.task }}</h1>
+        <div class="mt-1 text-xs text-zinc-500 font-mono">
+          {{ exp.base_model }}{% if exp.dataset_id %} · {{ exp.dataset_id }}{% endif %}
+        </div>
+      </div>
+      <div class="flex items-center gap-3 shrink-0">
+        <span id="status-pill" class="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-600">
+          {{ exp.status }}
+        </span>
+        <label class="flex items-center gap-1.5 text-xs text-zinc-500">
+          max loops
+          <input id="max-loops" type="number" min="1" max="12" value="6"
+            class="w-14 rounded-lg border border-zinc-300 px-2 py-1 text-sm text-zinc-800
+                   focus:outline-none focus:ring-2 focus:ring-zinc-900" />
+        </label>
+        <button id="run-btn"
+          class="rounded-xl bg-zinc-900 text-white px-4 py-2 text-sm font-medium hover:bg-zinc-800">
+          {% if iterations %}Re-run loop{% else %}Run the loop &rarr;{% endif %}
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- body -->
+  <div class="flex-1 overflow-y-auto p-6">
+    <div id="research" class="hidden mb-5"></div>
+    <div id="dataset" class="hidden mb-5 max-w-3xl"></div>
+    <div id="feed" class="hidden mb-5 max-w-3xl"></div>
+    <div id="trend" class="hidden mb-5 max-w-3xl"></div>
+    <div id="live" class="hidden mb-4 max-w-3xl"></div>
+    <div id="timeline" class="space-y-4 max-w-3xl"></div>
+    <div id="done" class="hidden mt-6 max-w-3xl"></div>
+
+    <!-- Try the trained model (hosted, warm) -->
+    <div class="mt-6 max-w-3xl rounded-xl border border-zinc-200 bg-white p-4">
+      <div class="text-[11px] uppercase tracking-wide text-zinc-400 mb-1">Try the trained model</div>
+      <div class="text-xs text-zinc-500 mb-3">Type any text — the finetuned model classifies it (loads once, then it's warm).</div>
+      <div class="flex gap-2">
+        <input id="chat-in" type="text" placeholder="e.g. I can't stop smiling today"
+          class="flex-1 rounded-xl border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900"/>
+        <button id="chat-btn" class="rounded-xl bg-zinc-900 text-white px-4 py-2 text-sm font-medium hover:bg-zinc-800">Classify</button>
+      </div>
+      <div id="chat-out" class="mt-3"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const EXP_ID = {{ exp.exp_id | tojson }};
+const PRELOAD = {{ iterations | tojson }};
+const RESEARCH = {dataset_id: {{ exp.dataset_id | tojson }}, labels: {{ exp.labels | tojson }},
+                  task_type: {{ exp.task_type | tojson }}, config: {{ exp.config | tojson }},
+                  budget: {{ exp.budget | tojson }}, candidates: {{ exp.candidates | tojson }},
+                  base_model: {{ exp.base_model | tojson }}, gpu: {{ exp.gpu | tojson }},
+                  model_params_b: {{ exp.model_params_b | tojson }},
+                  validation: {{ exp.validation | tojson }}};
+
+const $timeline = document.getElementById("timeline");
+const $research = document.getElementById("research");
+const $dataset = document.getElementById("dataset");
+const $feed = document.getElementById("feed");
+const $trend = document.getElementById("trend");
+const $live = document.getElementById("live");
+const $done = document.getElementById("done");
+const $status = document.getElementById("status-pill");
+const $btn = document.getElementById("run-btn");
+
+const pct = v => Math.round(v * 100);
+const barColor = v => v >= 0.85 ? "bg-emerald-500" : v >= 0.6 ? "bg-amber-400" : "bg-rose-500";
+
+// --- activity feed: append-only log of what the agent is doing -----------
+let feedLines = [];
+function feedReset() { feedLines = []; $feed.classList.add("hidden"); $feed.innerHTML = ""; }
+function feedAdd(text) {
+  feedLines.push(text);
+  $feed.classList.remove("hidden");
+  $feed.innerHTML = `
+    <div class="rf-in rounded-xl border border-zinc-200 bg-white p-4">
+      <div class="text-[11px] uppercase tracking-wide text-zinc-400 mb-2">Activity</div>
+      <ol class="space-y-1 text-xs text-zinc-600">
+        ${feedLines.map(t => `<li class="flex gap-2"><span class="text-emerald-500">✓</span><span>${t}</span></li>`).join("")}
+      </ol>
+    </div>`;
+}
+
+const STATUS_STYLE = {
+  researching: "bg-sky-100 text-sky-700", training: "bg-amber-100 text-amber-700",
+  evaluating: "bg-violet-100 text-violet-700", diagnosing: "bg-indigo-100 text-indigo-700",
+  done: "bg-emerald-100 text-emerald-700", error: "bg-rose-100 text-rose-700",
+};
+function setStatus(text, key) {
+  $status.textContent = text;
+  $status.className = "rounded-full px-3 py-1 text-xs font-medium " + (STATUS_STYLE[key] || "bg-zinc-100 text-zinc-600");
+}
+
+// Live training panel — driven by "progress" events (phase/step/loss).
+function renderLive(p) {
+  $live.classList.remove("hidden");
+  if (p.phase === "train") {
+    const frac = p.total ? p.step / p.total : 0;
+    $live.innerHTML = `
+      <div class="rf-in rounded-xl border border-amber-200 bg-amber-50 p-4">
+        <div class="flex items-center justify-between text-xs text-amber-800 mb-2">
+          <span>Checkpoint ${p.index} · training on GPU…</span>
+          <span class="tabular-nums">step ${p.step}/${p.total} · loss ${p.loss}</span>
+        </div>
+        <div class="h-2 rounded-full bg-amber-100 overflow-hidden">
+          <div class="h-full bg-amber-500 rf-bar transition-all" style="width:${Math.round(frac*100)}%"></div>
+        </div>
+      </div>`;
+  } else {
+    const msg = p.phase === "evaluating" ? "evaluating per-label accuracy…"
+              : (p.msg || "working…");
+    $live.innerHTML = `
+      <div class="rf-in rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-600">
+        <span class="inline-block w-2 h-2 rounded-full bg-amber-500 rf-breathe mr-2"></span>
+        Checkpoint ${p.index ?? ""} · ${msg}
+      </div>`;
+  }
+}
+function clearLive() { $live.classList.add("hidden"); $live.innerHTML = ""; }
+
+// --- dataset panel: the peeked sample (what the agent saw) + split sizes ---
+let dsInfo = {};
+function renderDataset() {
+  const v = dsInfo.validation;
+  const hasSamples = v && v.samples && v.samples.length;
+  if (!hasSamples && dsInfo.n_train == null) { $dataset.classList.add("hidden"); return; }
+  $dataset.classList.remove("hidden");
+  const verdict = v ? (v.peeked
+      ? `<span class="${v.ok!==false?'text-emerald-600':'text-amber-600'}">${v.ok!==false?'✓ validated':'⚠ flagged'}</span> — ${v.reason||''}`
+      : `validation skipped`) : "";
+  const splits = (dsInfo.n_train != null) ? `
+      <div class="flex flex-wrap gap-4 mb-3 text-xs">
+        <div><span class="text-zinc-400">train</span> <b class="tabular-nums">${dsInfo.n_train}</b></div>
+        <div><span class="text-zinc-400">validation</span> <b class="tabular-nums">${dsInfo.n_eval}</b></div>
+        <div><span class="text-zinc-400">held-out test</span> <b class="tabular-nums">${dsInfo.n_test}</b></div>
+        ${dsInfo.per_class ? `<div class="text-zinc-400">per class: ${Object.entries(dsInfo.per_class).map(([k,n])=>`${k} ${n}`).join(" · ")}</div>`:""}
+      </div>` : "";
+  const rows = hasSamples ? v.samples.map(s => `
+      <tr class="border-t border-zinc-100">
+        <td class="py-1.5 pr-3 align-top"><span class="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600 whitespace-nowrap">${s.label}</span></td>
+        <td class="py-1.5 text-zinc-600">${(s.text||"").replace(/</g,"&lt;")}</td>
+      </tr>`).join("") : "";
+  $dataset.innerHTML = `
+    <div class="rf-in rounded-xl border border-zinc-200 bg-white p-4">
+      <div class="text-[11px] uppercase tracking-wide text-zinc-400 mb-2">Dataset — what the agent peeked</div>
+      ${verdict ? `<div class="text-xs text-zinc-600 mb-3">${verdict}</div>` : ""}
+      ${splits}
+      ${hasSamples ? `<table class="w-full text-xs"><thead>
+        <tr class="text-zinc-400 text-[10px] uppercase"><th class="text-left pb-1 w-20">label</th><th class="text-left pb-1">text</th></tr>
+        </thead><tbody>${rows}</tbody></table>` : ""}
+    </div>`;
+}
+
+const PALETTE = ["#2563eb","#dc2626","#059669","#d97706","#7c3aed","#0891b2",
+                 "#db2777","#65a30d","#475569","#ea580c"];
+let series = [];  // [{overall, per_label, accepted}] in checkpoint order
+
+function pushPoint(overall, per_label, accepted) {
+  series.push({overall, per_label, accepted});
+  renderTrend();
+}
+
+function renderTrend() {
+  if (series.length < 1) { $trend.classList.add("hidden"); return; }
+  $trend.classList.remove("hidden");
+  const W = 700, H = 230, padL = 36, padR = 12, padT = 14, padB = 26;
+  const n = series.length;
+  const labels = Object.keys(series[0].per_label);
+  const xs = i => padL + (n === 1 ? (W-padL-padR)/2 : i * (W-padL-padR)/(n-1));
+  const ys = v => padT + (1 - v) * (H-padT-padB);
+
+  const gridY = [0,0.25,0.5,0.75,1.0].map(v =>
+    `<line x1="${padL}" y1="${ys(v)}" x2="${W-padR}" y2="${ys(v)}" stroke="#f1f5f9"/>`
+    + `<text x="${padL-6}" y="${ys(v)+3}" text-anchor="end" font-size="9" fill="#94a3b8">${pct(v)}</text>`
+  ).join("");
+
+  const line = (key, color, width, getv) => {
+    const pts = series.map((s,i) => `${xs(i)},${ys(getv(s))}`).join(" ");
+    const dots = series.map((s,i) =>
+      `<circle cx="${xs(i)}" cy="${ys(getv(s))}" r="${width>2?3:2.2}" fill="${color}"/>`).join("");
+    return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${width}"
+              stroke-linejoin="round"/>${dots}`;
+  };
+
+  const labelLines = labels.map((lab,i) =>
+    line(lab, PALETTE[i % PALETTE.length], 1.6, s => s.per_label[lab] ?? 0)).join("");
+  const overallLine = line("overall", "#0f172a", 3, s => s.overall);
+
+  const xticks = series.map((s,i) =>
+    `<text x="${xs(i)}" y="${H-8}" text-anchor="middle" font-size="9" fill="#94a3b8">${i}</text>`).join("");
+
+  const legend = labels.map((lab,i) =>
+    `<span class="inline-flex items-center gap-1 mr-3">
+       <span style="width:10px;height:3px;background:${PALETTE[i%PALETTE.length]};display:inline-block"></span>
+       ${lab}</span>`).join("")
+    + `<span class="inline-flex items-center gap-1 mr-3 font-semibold">
+       <span style="width:10px;height:3px;background:#0f172a;display:inline-block"></span>overall</span>`;
+
+  $trend.innerHTML = `
+    <div class="rf-in rounded-xl border border-zinc-200 bg-white p-4">
+      <div class="text-[11px] uppercase tracking-wide text-zinc-400 mb-2">Per-label accuracy across checkpoints</div>
+      <svg viewBox="0 0 ${W} ${H}" class="w-full" style="max-height:240px">
+        ${gridY}${labelLines}${overallLine}${xticks}
+      </svg>
+      <div class="mt-2 text-[11px] text-zinc-500 leading-5">${legend}</div>
+    </div>`;
+}
+
+function labelBars(per_label) {
+  return Object.entries(per_label)
+    .sort((a,b) => a[1]-b[1])
+    .map(([k,v]) => `
+      <div class="flex items-center gap-3 text-xs">
+        <div class="w-28 truncate text-zinc-600">${k}</div>
+        <div class="flex-1 h-2 rounded-full bg-zinc-100 overflow-hidden">
+          <div class="h-full ${barColor(v)}" style="width:${pct(v)}%"></div>
+        </div>
+        <div class="w-10 text-right tabular-nums ${v<0.6?'text-rose-600 font-semibold':'text-zinc-500'}">${pct(v)}%</div>
+      </div>`).join("");
+}
+
+function renderResearch(r) {
+  $research.classList.remove("hidden");
+  const c = r.config || {};
+  const b = r.budget || {};
+  const tgts = (c.target_modules || []).join(", ");
+  const cands = r.candidates || [];
+  let candHtml = "";
+  if (cands.length) {
+    candHtml = `
+      <div class="mt-3 pt-3 border-t border-zinc-100">
+        <div class="text-[11px] uppercase tracking-wide text-zinc-400 mb-1">
+          Searched HuggingFace · ${cands.length} real datasets found</div>
+        <ul class="space-y-0.5 text-xs">
+          ${cands.map(d => {
+            const chosen = d.id === r.dataset_id;
+            return `<li class="flex items-center gap-2">
+              <a href="${d.url}" target="_blank" rel="noopener"
+                 class="font-mono ${chosen ? 'text-emerald-600 font-semibold' : 'text-sky-600'} hover:underline">${d.id}</a>
+              <span class="text-zinc-400">${d.downloads.toLocaleString()} downloads</span>
+              ${chosen ? '<span class="text-[10px] rounded-full bg-emerald-100 text-emerald-700 px-1.5 py-0.5">chosen</span>' : ''}
+            </li>`;
+          }).join("")}
+        </ul>
+      </div>`;
+  }
+  $research.innerHTML = `
+    <div class="rf-in rf-card rounded-xl border border-zinc-200 bg-white p-4 max-w-3xl">
+      <div class="text-[11px] uppercase tracking-wide text-zinc-400 mb-1">Research agent</div>
+      <div class="text-sm">Chose
+        <a href="https://huggingface.co/datasets/${r.dataset_id}" target="_blank" rel="noopener"
+           class="font-mono text-sky-600 hover:underline">${r.dataset_id||'?'}</a>
+        <span class="text-zinc-400">(${r.task_type||''})</span></div>
+      ${r.reason ? `<div class="text-xs text-zinc-500 mt-1">${r.reason}</div>` : ""}
+      ${r.base_model ? `<div class="mt-2 text-xs text-zinc-600 font-mono">
+        model · ${r.base_model}${r.model_params_b ? ` (${r.model_params_b}B)` : ""}${r.gpu ? ` · GPU ${r.gpu}` : ""}</div>` : ""}
+      <div class="mt-1 text-xs text-zinc-500 font-mono">
+        LoRA · rank ${c.rank} · alpha ${c.alpha} · steps ${c.steps}${tgts ? ` · targets [${tgts}]` : ""}</div>
+      ${(b.examples_per_class) ? `<div class="text-xs text-zinc-500 font-mono">
+        budget · ${b.examples_per_class} train/class · ${b.eval_per_class} eval/class</div>` : ""}
+      ${candHtml}
+    </div>`;
+}
+
+function checkpointCard(idx, overall, per_label, notes, accepted) {
+  const el = document.createElement("div");
+  el.className = "rf-in rf-card rounded-xl border bg-white p-4 "
+    + (accepted === false ? "border-amber-200" : "border-zinc-200");
+  const badge = accepted === undefined ? "" :
+    (accepted
+      ? `<span class="rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-[11px] font-medium">▲ new best · kept</span>`
+      : `<span class="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[11px] font-medium">↩ regressed · rolled back</span>`);
+  el.innerHTML = `
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-semibold">Checkpoint ${idx}</span>${badge}
+      </div>
+      <div class="text-sm tabular-nums">overall <span class="font-semibold">${pct(overall)}%</span></div>
+    </div>
+    <div class="space-y-1.5">${labelBars(per_label)}</div>
+    ${notes ? `<div class="mt-3 text-[11px] text-zinc-400 font-mono">${notes}</div>` : ""}
+    <div class="decision mt-3"></div>`;
+  $timeline.appendChild(el);
+  return el;
+}
+
+function renderDecision(card, d) {
+  const slot = card.querySelector(".decision");
+  const tag = {add_data:"bg-sky-100 text-sky-700", tune:"bg-violet-100 text-violet-700",
+               stop:"bg-emerald-100 text-emerald-700"}[d.action] || "bg-zinc-100 text-zinc-600";
+  const adds = Object.entries(d.add_examples||{}).map(([k,v])=>`${k} +${v}`).join(", ");
+  slot.innerHTML = `
+    <div class="border-t border-zinc-100 pt-3">
+      <div class="flex items-center gap-2">
+        <span class="rounded-full px-2 py-0.5 text-[11px] font-medium ${tag}">${d.action}</span>
+        ${adds ? `<span class="text-xs text-zinc-500 font-mono">${adds}</span>` : ""}
+      </div>
+      ${d.diagnosis ? `<div class="text-xs text-zinc-600 mt-1.5"><b>Diagnosis:</b> ${d.diagnosis}</div>`:""}
+      ${d.rationale ? `<div class="text-xs text-zinc-500 mt-0.5">${d.rationale}</div>`:""}
+    </div>`;
+}
+
+// Render any previously-saved run on load.
+function preload() {
+  if (RESEARCH.dataset_id) {
+    renderResearch(RESEARCH);
+    dsInfo = {validation: RESEARCH.validation}; renderDataset();
+    feedAdd(`Picked dataset <span class="font-mono">${RESEARCH.dataset_id}</span>`);
+  }
+  let lastCard = null;
+  series = [];
+  for (const it of PRELOAD) {
+    const r = it.result;
+    lastCard = checkpointCard(it.index, r.overall_accuracy, r.per_label, r.notes, it.accepted);
+    pushPoint(r.overall_accuracy, r.per_label, it.accepted);
+    feedAdd(`Checkpoint ${it.index}: overall <b>${pct(r.overall_accuracy)}%</b> — ${it.accepted ? "new best, kept" : "regressed, rolled back"}`);
+    if (it.decision) {
+      renderDecision(lastCard, it.decision);
+      const adds = Object.entries(it.decision.add_examples||{}).map(([k,v])=>`${k}+${v}`).join(", ");
+      feedAdd(`Decision: <b>${it.decision.action}</b>${adds ? " — "+adds : ""}`);
+    }
+  }
+}
+
+let cards = {};
+function run() {
+  $btn.disabled = true; $btn.textContent = "running…";
+  $timeline.innerHTML = ""; $done.classList.add("hidden"); clearLive(); feedReset(); cards = {};
+  $dataset.classList.add("hidden"); dsInfo = {};
+  series = []; renderTrend();
+  setStatus("researching…", "researching");
+
+  const maxLoops = Math.max(1, Math.min(12, parseInt(document.getElementById("max-loops").value) || 6));
+  const es = new EventSource(`/e/${EXP_ID}/stream?max_iters=${maxLoops}`);
+  es.addEventListener("research", e => {
+    const r = JSON.parse(e.data); renderResearch(r);
+    dsInfo = {validation: r.validation}; renderDataset();
+    if (r.searched) feedAdd(`Searched HuggingFace — found ${r.n_candidates} real text-classification datasets`);
+    feedAdd(`Picked dataset <span class="font-mono">${r.dataset_id}</span> for ${r.task_type}`);
+    if (r.switched_from) feedAdd(`Sample didn't fit <span class="font-mono">${r.switched_from}</span> — switched dataset`);
+    if (r.validation && r.validation.peeked) feedAdd(`Peeked ${r.validation.n_sampled} sample rows → ${r.validation.ok!==false?"validated fit":"flagged"}: ${r.validation.reason}`);
+    if (r.base_model) feedAdd(`Router chose model <span class="font-mono">${r.base_model}</span> → GPU ${r.gpu}`);
+    setStatus("training…", "training");
+  });
+  es.addEventListener("progress", e => {
+    const p = JSON.parse(e.data);
+    if (p.phase === "data") {
+      feedAdd(`Loaded ${p.n_examples} examples across ${p.labels.length} classes: ${p.labels.join(", ")}`);
+      dsInfo.n_train = p.n_train; dsInfo.n_eval = p.n_eval; dsInfo.n_test = p.n_test; dsInfo.per_class = p.per_class;
+      renderDataset();
+    } else if (p.phase === "model") {
+      feedAdd(`Loaded ${p.model} · ${p.trainable_m}M trainable LoRA params · targets [${(p.targets||[]).join(", ")}]`);
+    } else {
+      renderLive(p);
+      if (p.phase === "evaluating") setStatus("evaluating…", "evaluating");
+      else if (p.phase === "train") setStatus("training…", "training");
+    }
+  });
+  es.addEventListener("checkpoint", e => {
+    const d = JSON.parse(e.data);
+    clearLive();
+    cards[d.index] = checkpointCard(d.index, d.overall, d.per_label, d.notes, d.accepted);
+    pushPoint(d.overall, d.per_label, d.accepted);
+    feedAdd(`Checkpoint ${d.index}: overall <b>${pct(d.overall)}%</b> — ${d.accepted ? "new best, kept" : "regressed, rolled back"}`);
+    cards[d.index].scrollIntoView({behavior:"smooth", block:"end"});
+    setStatus("diagnosing…", "diagnosing");
+  });
+  es.addEventListener("decision", e => {
+    const d = JSON.parse(e.data);
+    if (cards[d.index]) renderDecision(cards[d.index], d);
+    const adds = Object.entries(d.add_examples||{}).map(([k,v])=>`${k}+${v}`).join(", ");
+    feedAdd(`Decision: <b>${d.action}</b>${adds ? " — "+adds : ""}`);
+    if (d.action !== "stop") setStatus("training…", "training");
+  });
+  es.addEventListener("done", e => {
+    const d = JSON.parse(e.data);
+    clearLive();
+    feedAdd(`Done — best was checkpoint ${d.best_index} @ <b>${pct(d.final_overall)}%</b>; adapter saved`);
+    $done.classList.remove("hidden");
+    $done.innerHTML = `<div class="rf-in rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+      <b>Done.</b> ${d.iterations} checkpoint(s) · best was <b>checkpoint ${d.best_index}</b>
+      at <b>${pct(d.final_overall)}%</b> validation · stopped because ${d.stop_reason}.
+      ${d.test_overall != null ? `<div class="mt-1"><b>Held-out test: ${pct(d.test_overall)}%</b>
+        <span class="text-emerald-700/70">(the honest number — agent never saw this set)</span></div>` : ""}
+      ${d.best_checkpoint ? `<div class="mt-1 text-[11px] font-mono text-emerald-700/80">saved adapter: ${d.best_checkpoint}</div>` : ""}</div>`;
+    setStatus("done", "done");
+  });
+  es.addEventListener("error", e => {
+    clearLive();
+    let msg = "something went wrong";
+    try { msg = JSON.parse(e.data).message || msg; } catch(_) {}
+    $done.classList.remove("hidden");
+    $done.innerHTML = `<div class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+      <b>Couldn't finish:</b> ${msg}
+      <div class="mt-1 text-[11px] text-rose-700/80">Try a different task, or check the uvicorn terminal for details.</div></div>`;
+    setStatus("error", "error");
+  });
+  es.addEventListener("close", () => { es.close(); $btn.disabled = false; $btn.textContent = "Re-run loop"; });
+  es.onerror = () => { es.close(); $btn.disabled = false; $btn.textContent = "Re-run loop"; };
+}
+
+$btn.addEventListener("click", run);
+preload();
+
+// --- chat / try-it: classify text with the trained adapter ---------------
+const $chatIn = document.getElementById("chat-in");
+const $chatBtn = document.getElementById("chat-btn");
+const $chatOut = document.getElementById("chat-out");
+async function classify() {
+  const text = $chatIn.value.trim();
+  if (!text) return;
+  $chatBtn.disabled = true; $chatBtn.textContent = "…";
+  $chatOut.innerHTML = `<div class="text-xs text-zinc-400">loading model (first call warms it up)…</div>`;
+  try {
+    const body = new URLSearchParams({text});
+    const r = await fetch(`/e/${EXP_ID}/predict`, {method:"POST", body});
+    const d = await r.json();
+    if (d.error) { $chatOut.innerHTML = `<div class="text-xs text-rose-600">${d.error}</div>`; }
+    else {
+      const bars = Object.entries(d.scores).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`
+        <div class="flex items-center gap-2 text-xs">
+          <div class="w-24 truncate ${k===d.label?'font-semibold text-zinc-800':'text-zinc-500'}">${k}</div>
+          <div class="flex-1 h-2 rounded-full bg-zinc-100 overflow-hidden"><div class="h-full ${k===d.label?'bg-emerald-500':'bg-zinc-300'}" style="width:${Math.round(v*100)}%"></div></div>
+          <div class="w-10 text-right tabular-nums text-zinc-500">${Math.round(v*100)}%</div>
+        </div>`).join("");
+      $chatOut.innerHTML = `<div class="rounded-lg border border-zinc-200 p-3">
+        <div class="text-sm mb-2">→ <b>${d.label}</b></div>${bars}</div>`;
+    }
+  } catch(e) { $chatOut.innerHTML = `<div class="text-xs text-rose-600">request failed</div>`; }
+  $chatBtn.disabled = false; $chatBtn.textContent = "Classify";
+}
+$chatBtn.addEventListener("click", classify);
+$chatIn.addEventListener("keydown", e => { if (e.key==="Enter") classify(); });
+</script>
+{% endblock %}

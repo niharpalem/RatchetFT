@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}RatchetFT{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="bg-zinc-50 text-zinc-900 antialiased">
+  <div class="min-h-screen flex">
+    <aside class="w-64 shrink-0 border-r border-zinc-200 bg-white flex flex-col">
+      <a href="/" title="Back to home / start a new run"
+         class="px-4 py-4 border-b border-zinc-200 block hover:bg-zinc-50 transition-colors">
+        <div class="text-sm font-semibold tracking-tight">RatchetFT <span class="text-zinc-300 font-normal">⌂</span></div>
+        <div class="text-[11px] text-zinc-400">ratchet finetuning · only clicks forward</div>
+      </a>
+      <div class="px-4 py-3 flex items-center justify-between">
+        <span class="text-[11px] uppercase tracking-wide text-zinc-400">Experiments</span>
+        <a href="/" class="text-[11px] font-medium text-zinc-900 rounded-md border border-zinc-300 px-2 py-0.5 hover:bg-zinc-100">+ New</a>
+      </div>
+      <nav class="flex-1 overflow-y-auto px-2 space-y-1">
+        {% for e in experiments %}
+          <a href="/e/{{ e.exp_id }}"
+             class="block px-3 py-2 rounded-lg text-sm hover:bg-zinc-100 truncate
+                    {% if exp and exp.exp_id == e.exp_id %}bg-zinc-900 text-white hover:bg-zinc-900{% endif %}">
+            <div class="truncate">{{ e.task }}</div>
+            <div class="text-[10px] {% if exp and exp.exp_id == e.exp_id %}text-zinc-300{% else %}text-zinc-400{% endif %}">
+              {{ e.status }}{% if e.dataset_id %} · {{ e.dataset_id }}{% endif %}
+            </div>
+          </a>
+        {% else %}
+          <div class="px-3 py-2 text-xs text-zinc-400">No runs yet.</div>
+        {% endfor %}
+      </nav>
+      <div class="px-4 py-3 border-t border-zinc-200">
+        {% if experiments %}
+        <form method="post" action="/experiments/clear"
+              onsubmit="return confirm('Delete ALL experiments? This cannot be undone.');"
+              class="mb-2">
+          <button class="w-full text-[11px] font-medium text-rose-600 rounded-md border border-zinc-200 px-2 py-1 hover:bg-rose-50">
+            Clear all experiments
+          </button>
+        </form>
+        {% endif %}
+        <div class="text-[10px] text-zinc-400">
+          backend: <span class="font-mono">local · LFM2-350M</span> · brain: <span class="font-mono">claude CLI</span>
+        </div>
+      </div>
+    </aside>
+    <main class="flex-1 flex flex-col min-w-0">
+      {% block main %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

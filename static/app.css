@@ -1,0 +1,38 @@
+/* RatchetFT — minor polish on top of Tailwind CDN. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* --- minimal, tasteful motion ------------------------------------------ */
+
+/* soft fade-in-up — for cards/panels as they appear or stream in */
+@keyframes rf-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.rf-in { animation: rf-in .35s cubic-bezier(.2,.7,.2,1) both; }
+
+/* gentle hover lift on cards */
+.rf-card { transition: transform .12s ease, box-shadow .18s ease, border-color .15s ease; }
+.rf-card:hover { transform: translateY(-1px); box-shadow: 0 8px 24px -12px rgba(15,23,42,.18); }
+
+/* buttons & links: subtle, snappy feedback */
+button, a { transition: transform .1s ease, background-color .15s ease, color .15s ease, border-color .15s ease, box-shadow .15s ease; }
+button:active { transform: translateY(1px); }
+
+/* animated stripe for the live training bar (catchy but quiet) */
+@keyframes rf-stripes { from { background-position: 0 0; } to { background-position: 28px 0; } }
+.rf-bar {
+  background-image: linear-gradient(90deg,
+    rgba(255,255,255,.35) 25%, transparent 25%, transparent 50%,
+    rgba(255,255,255,.35) 50%, rgba(255,255,255,.35) 75%, transparent 75%);
+  background-size: 28px 28px;
+  animation: rf-stripes .8s linear infinite;
+}
+
+/* soft breathing pulse for "working" states */
+@keyframes rf-breathe { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+.rf-breathe { animation: rf-breathe 1.3s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rf-in, .rf-bar, .rf-breathe { animation: none; }
+  .rf-card:hover { transform: none; }
+}

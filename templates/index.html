@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block main %}
+<div class="flex-1 flex items-center justify-center p-8">
+  <div class="w-full max-w-2xl">
+    <h1 class="text-2xl font-semibold tracking-tight">Give it one sentence.</h1>
+    <p class="mt-2 text-sm text-zinc-500">
+      An agent finds a dataset, picks a model, finetunes, diagnoses the weak classes,
+      and <b>ratchets</b> accuracy forward until it stops itself — then reports an
+      honest held-out test score.
+    </p>
+
+    <form method="post" class="mt-6 space-y-4">
+      <textarea name="task" id="task" rows="3" required
+        placeholder="Train a model that… (describe the classifier you want)"
+        class="w-full rounded-xl border border-zinc-300 px-4 py-3 text-sm
+               focus:outline-none focus:ring-2 focus:ring-zinc-900 resize-none"></textarea>
+
+      <!-- hard tasks: where the agent's iterative refinement actually matters -->
+      <div>
+        <div class="text-[11px] uppercase tracking-wide text-zinc-400 mb-2">Try a hard one</div>
+        <div class="space-y-1.5">
+          {% for ex in [
+            "Finetune a model to classify U.S. Supreme Court opinions by legal issue area.",
+            "Finetune a model to classify contract clauses into ~100 legal types.",
+            "Finetune a model to flag sentences describing an adverse drug reaction.",
+            "Finetune a model to detect whether a C function is vulnerable.",
+            "Finetune a model to label citation intent in research papers."
+          ] %}
+          <button type="button"
+            onclick="document.getElementById('task').value=this.textContent.trim()"
+            class="block w-full text-left rounded-lg border border-zinc-200 bg-white px-3 py-2
+                   text-xs text-zinc-600 hover:border-zinc-400">{{ ex }}</button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- two ways to run the same task -->
+      <div class="border-t border-zinc-200 pt-4 flex flex-wrap items-center gap-3">
+        <button type="submit" formaction="/experiments"
+          class="inline-flex items-center gap-2 rounded-xl bg-zinc-900 text-white
+                 px-5 py-2.5 text-sm font-medium hover:bg-zinc-800">
+          Start the loop &rarr;
+        </button>
+        <span class="text-xs text-zinc-400">or</span>
+        <select name="compare"
+          class="rounded-lg border border-zinc-300 px-2 py-1.5 text-xs
+                 focus:outline-none focus:ring-2 focus:ring-zinc-900">
+          <option value="configs">bake off · 1 model, 3 param configs</option>
+          <option value="models2">bake off · 2 models</option>
+          <option value="models3">bake off · 3 models</option>
+        </select>
+        <button type="submit" formaction="/swarm"
+          class="inline-flex items-center gap-2 rounded-xl border border-zinc-900 text-zinc-900
+                 px-4 py-2.5 text-sm font-medium hover:bg-zinc-900 hover:text-white">
+          Bake off &rarr;
+        </button>
+      </div>
+
+      <input name="models" placeholder="bake-off models (optional, comma-separated) — else the agent picks"
+        class="w-full rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-mono
+               focus:outline-none focus:ring-2 focus:ring-zinc-900"/>
+    </form>
+
+    <p class="mt-3 text-xs text-zinc-400">
+      <b>Start the loop</b> = one model, refined to convergence (the core).
+      <b>Bake off</b> = run up to 3 in parallel, keep the winner by held-out test.
+    </p>
+  </div>
+</div>
+{% endblock %}

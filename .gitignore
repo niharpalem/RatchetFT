@@ -1,0 +1,8 @@
+# Python / venv
+.venv/
+__pycache__/
+*.pyc
+
+# Experiment artifacts (regenerated at runtime)
+data/*
+!data/.gitkeep
