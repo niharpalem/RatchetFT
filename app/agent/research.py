@@ -57,7 +57,7 @@ base model, GPU, initial LoRA config + training budget.
 {_MODEL_GUIDE}
 
 Return JSON:
-  id (str — MUST be exactly one id from the provided list),
+  id (str — MUST be exactly one id from the provided list; fully-qualified owner/name),
   config (str or null — HF subset/config name if the dataset needs one),
   text_fields (array of str — text column(s); [] to auto-detect),
   label_field (str or null — label column; null to auto-detect),
@@ -78,7 +78,7 @@ GPU, LoRA config + budget.
 {_MODEL_GUIDE}
 
 Return JSON:
-  id (str — HF dataset id, e.g. "dair-ai/emotion"),
+  id (str — fully-qualified HF dataset id "owner/name", e.g. "dair-ai/emotion", "coastalcph/lex_glue"; never a bare name),
   config (str or null), text_fields (array of str), label_field (str or null),
   task_type (str),
   base_model (str — model id from the registry), gpu (str — T4/L4/A10G/A100/H100),
@@ -101,7 +101,7 @@ def _build(raw: dict, *, searched: bool, n_candidates: int, candidates: list | N
         target_modules=targets,
     )
     dataset = {
-        "id": raw.get("id") or "dair-ai/emotion",
+        "id": ds._canonical_id(raw.get("id") or "dair-ai/emotion"),
         "config": raw.get("config"),
         "text_fields": list(raw.get("text_fields") or []),
         "label_field": raw.get("label_field"),

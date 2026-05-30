@@ -32,9 +32,29 @@ class DatasetSpec:
     def from_dict(cls, d: dict) -> "DatasetSpec":
         tf = d.get("text_fields") or ([d["text_field"]] if d.get("text_field") else [])
         return cls(
-            id=d["id"], config=d.get("config"),
+            id=_canonical_id(d["id"]), config=d.get("config"),
             text_fields=list(tf), label_field=d.get("label_field"),
         )
+
+
+# Legacy bare names → their canonical namespaced ids (the Hub now requires owner/name).
+_ID_ALIASES = {
+    "lex_glue": "coastalcph/lex_glue",
+    "ag_news": "fancyzhx/ag_news",
+    "emotion": "dair-ai/emotion",
+    "banking77": "PolyAI/banking77",
+    "tweet_eval": "cardiffnlp/tweet_eval",
+    "sst2": "stanfordnlp/sst2",
+    "scicite": "allenai/scicite",
+    "ade_corpus_v2": "ade-benchmark-corpus/ade_corpus_v2",
+}
+
+
+def _canonical_id(ds_id: str) -> str:
+    """Map a bare/legacy dataset id to a namespaced one when we know it."""
+    ds_id = (ds_id or "").strip()
+    return _ID_ALIASES.get(ds_id, ds_id)
+
 
 
 # Common names, tried in order, when auto-detecting.

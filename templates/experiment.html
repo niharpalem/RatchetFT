@@ -40,8 +40,8 @@
     <div id="timeline" class="space-y-4 max-w-3xl"></div>
     <div id="done" class="hidden mt-6 max-w-3xl"></div>
 
-    <!-- Try the trained model (hosted, warm) -->
-    <div class="mt-6 max-w-3xl rounded-xl border border-zinc-200 bg-white p-4">
+    <!-- Try the trained model (hosted, warm) — only shown once a model exists -->
+    <div id="trybox" class="mt-6 max-w-3xl rounded-xl border border-zinc-200 bg-white p-4{% if not exp.best_checkpoint %} hidden{% endif %}">
       <div class="text-[11px] uppercase tracking-wide text-zinc-400 mb-1">Try the trained model</div>
       <div class="text-xs text-zinc-500 mb-3">Type any text — the finetuned model classifies it (loads once, then it's warm).</div>
       <div class="flex gap-2">
@@ -386,6 +386,7 @@ function run() {
   es.addEventListener("done", e => {
     const d = JSON.parse(e.data);
     clearLive();
+    document.getElementById("trybox").classList.remove("hidden");   // model now exists → enable chat
     feedAdd(`Done — best was checkpoint ${d.best_index} @ <b>${pct(d.final_overall)}%</b>; adapter saved`);
     $done.classList.remove("hidden");
     $done.innerHTML = `<div class="rf-in rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
